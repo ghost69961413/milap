@@ -171,8 +171,8 @@ function AuthPage() {
               <p className="mt-2">
                 1. Signup/login and send interest in Discover, find your partner happy journey.
               </p>
-              <p>2. Logout, login as riya and accept in Chat page.</p>
-              <p>3. Login back as user1 and chat with riya in real-time.</p>
+              <p>2. Logout, login and accept interest in Chat page.</p>
+              <p>3. afetr acceptiing chat with your partner in real-time.</p>
             </div>
           </section>
 
