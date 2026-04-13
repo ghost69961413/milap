@@ -1,0 +1,496 @@
+import { USER_ROLES } from "../constants/roles.js";
+import Profile from "../models/Profile.js";
+import User from "../models/User.js";
+import ApiError from "../utils/ApiError.js";
+
+const MATCH_WEIGHTS = {
+  ageCompatibility: 0.3,
+  locationMatch: 0.25,
+  educationMatch: 0.2,
+  interestsMatch: 0.25
+};
+
+const MAX_LIMIT = 50;
+const BOOST_DISCOVERY_BONUS = 8;
+const MAX_CANDIDATE_POOL = 500;
+
+function normalizeText(value) {
+  return (value || "").trim().toLowerCase();
+}
+
+function toNormalizedArray(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return values.map((value) => normalizeText(value)).filter(Boolean);
+}
+
+function hasAnyIntersection(source, target) {
+  const sourceSet = new Set(toNormalizedArray(source));
+
+  return toNormalizedArray(target).some((item) => sourceSet.has(item));
+}
+
+function countIntersection(source, target) {
+  const sourceSet = new Set(toNormalizedArray(source));
+  const targetSet = new Set(toNormalizedArray(target));
+
+  let commonCount = 0;
+
+  sourceSet.forEach((item) => {
+    if (targetSet.has(item)) {
+      commonCount += 1;
+    }
+  });
+
+  return {
+    commonCount,
+    unionCount: new Set([...sourceSet, ...targetSet]).size
+  };
+}
+
+function scoreAgeCompatibility(candidateAge, partnerPreferences) {
+  const minAge = partnerPreferences?.minAge ?? 18;
+  const maxAge = partnerPreferences?.maxAge ?? 80;
+
+  if (candidateAge >= minAge && candidateAge <= maxAge) {
+    return 100;
+  }
+
+  const distance = candidateAge < minAge ? minAge - candidateAge : candidateAge - maxAge;
+
+  return Math.max(0, 100 - distance * 15);
+}
+
+function scoreLocationMatch(candidateLocation, currentProfile, partnerPreferences) {
+  const preferredLocation = normalizeText(partnerPreferences?.location);
+  const normalizedCandidateLocation = normalizeText(candidateLocation);
+
+  if (preferredLocation) {
+    if (normalizedCandidateLocation === preferredLocation) {
+      return 100;
+    }
+
+    if (normalizedCandidateLocation.includes(preferredLocation)) {
+      return 80;
+    }
+
+    return 0;
+  }
+
+  const currentLocation = normalizeText(currentProfile.location);
+
+  if (!currentLocation || !normalizedCandidateLocation) {
+    return 40;
+  }
+
+  if (normalizedCandidateLocation === currentLocation) {
+    return 75;
+  }
+
+  if (normalizedCandidateLocation.includes(currentLocation) || currentLocation.includes(normalizedCandidateLocation)) {
+    return 55;
+  }
+
+  return 0;
+}
+
+function scoreEducationMatch(candidateEducation, currentProfile, partnerPreferences) {
+  const preferredEducations = toNormalizedArray(partnerPreferences?.education);
+  const normalizedCandidateEducation = normalizeText(candidateEducation);
+
+  if (preferredEducations.length) {
+    return preferredEducations.includes(normalizedCandidateEducation) ? 100 : 0;
+  }
+
+  const currentEducation = normalizeText(currentProfile.education);
+
+  if (!currentEducation || !normalizedCandidateEducation) {
+    return 40;
+  }
+
+  return currentEducation === normalizedCandidateEducation ? 70 : 20;
+}
+
+function scoreInterestsMatch(candidateInterests, currentProfile, partnerPreferences) {
+  const baseInterests = partnerPreferences?.interests?.length
+    ? partnerPreferences.interests
+    : currentProfile.interests;
+
+  const { commonCount, unionCount } = countIntersection(baseInterests, candidateInterests);
+
+  if (!unionCount) {
+    return 50;
+  }
+
+  return Math.round((commonCount / unionCount) * 100);
+}
+
+function passesPrimaryPreferenceFilter(candidate, partnerPreferences) {
+  if (!partnerPreferences) {
+    return true;
+  }
+
+  if (partnerPreferences.gender && partnerPreferences.gender !== "any" && candidate.gender !== partnerPreferences.gender) {
+    return false;
+  }
+
+  if (partnerPreferences.minAge !== undefined && candidate.age < partnerPreferences.minAge) {
+    return false;
+  }
+
+  if (partnerPreferences.maxAge !== undefined && candidate.age > partnerPreferences.maxAge) {
+    return false;
+  }
+
+  if (partnerPreferences.minIncome !== undefined && candidate.income < partnerPreferences.minIncome) {
+    return false;
+  }
+
+  if (partnerPreferences.religion?.length && !hasAnyIntersection([candidate.religion], partnerPreferences.religion)) {
+    return false;
+  }
+
+  if (partnerPreferences.caste?.length && !hasAnyIntersection([candidate.caste], partnerPreferences.caste)) {
+    return false;
+  }
+
+  if (partnerPreferences.education?.length && !hasAnyIntersection([candidate.education], partnerPreferences.education)) {
+    return false;
+  }
+
+  if (partnerPreferences.profession?.length && !hasAnyIntersection([candidate.profession], partnerPreferences.profession)) {
+    return false;
+  }
+
+  if (partnerPreferences.location) {
+    const candidateLocation = normalizeText(candidate.location);
+    const preferredLocation = normalizeText(partnerPreferences.location);
+
+    if (!candidateLocation.includes(preferredLocation)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function passesReciprocalPreferenceFilter(candidate, currentProfile) {
+  const reciprocalPreferences = candidate.partnerPreferences || {};
+
+  if (
+    reciprocalPreferences.gender &&
+    reciprocalPreferences.gender !== "any" &&
+    reciprocalPreferences.gender !== currentProfile.gender
+  ) {
+    return false;
+  }
+
+  if (reciprocalPreferences.minAge !== undefined && currentProfile.age < reciprocalPreferences.minAge) {
+    return false;
+  }
+
+  if (reciprocalPreferences.maxAge !== undefined && currentProfile.age > reciprocalPreferences.maxAge) {
+    return false;
+  }
+
+  return true;
+}
+
+function buildMatchScore(candidate, currentProfile, partnerPreferences) {
+  const scoreBreakdown = {
+    ageCompatibility: scoreAgeCompatibility(candidate.age, partnerPreferences),
+    locationMatch: scoreLocationMatch(candidate.location, currentProfile, partnerPreferences),
+    educationMatch: scoreEducationMatch(candidate.education, currentProfile, partnerPreferences),
+    interestsMatch: scoreInterestsMatch(
+      candidate.interests || [],
+      currentProfile,
+      partnerPreferences
+    )
+  };
+
+  const matchScore = Math.round(
+    Object.entries(MATCH_WEIGHTS).reduce((total, [metric, weight]) => {
+      return total + scoreBreakdown[metric] * weight;
+    }, 0)
+  );
+
+  const matchedOn = Object.entries(scoreBreakdown)
+    .filter(([, score]) => score >= 60)
+    .map(([metric]) => metric);
+
+  return {
+    matchScore,
+    scoreBreakdown,
+    matchedOn
+  };
+}
+
+function isBoostActive(candidate) {
+  return Boolean(candidate.boostExpiresAt && candidate.boostExpiresAt > new Date());
+}
+
+function toMatchResult(candidate, scoreData) {
+  const boosted = isBoostActive(candidate);
+  const discoveryScore = Math.min(
+    100,
+    scoreData.matchScore + (boosted ? BOOST_DISCOVERY_BONUS : 0)
+  );
+
+  return {
+    profileId: candidate._id.toString(),
+    userId: candidate.user.toString(),
+    name: candidate.name,
+    age: candidate.age,
+    gender: candidate.gender,
+    religion: candidate.religion,
+    caste: candidate.caste,
+    education: candidate.education,
+    profession: candidate.profession,
+    income: candidate.income,
+    location: candidate.location,
+    bio: candidate.bio,
+    interests: candidate.interests || [],
+    images: candidate.images || [],
+    isBoosted: boosted,
+    boostExpiresAt: candidate.boostExpiresAt || null,
+    matchScore: scoreData.matchScore,
+    discoveryScore,
+    scoreBreakdown: scoreData.scoreBreakdown,
+    matchedOn: scoreData.matchedOn
+  };
+}
+
+function parseNumber(value, fallbackValue) {
+  const parsedValue = Number(value);
+
+  if (Number.isNaN(parsedValue)) {
+    return fallbackValue;
+  }
+
+  return parsedValue;
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getProfileUserId(profile) {
+  if (!profile || !profile.user) {
+    return null;
+  }
+
+  if (typeof profile.user === "object" && profile.user._id) {
+    return profile.user._id.toString();
+  }
+
+  return profile.user.toString();
+}
+
+async function filterProfilesByRole(profiles, role = USER_ROLES.NORMAL_USER) {
+  if (!Array.isArray(profiles) || profiles.length === 0) {
+    return [];
+  }
+
+  const candidateUserIds = Array.from(
+    new Set(
+      profiles
+        .map((profile) => getProfileUserId(profile))
+        .filter(Boolean)
+    )
+  );
+
+  if (candidateUserIds.length === 0) {
+    return [];
+  }
+
+  const eligibleUsers = await User.find({
+    _id: { $in: candidateUserIds },
+    role
+  }).select("_id");
+
+  const eligibleUserIds = new Set(eligibleUsers.map((user) => user._id.toString()));
+
+  return profiles.filter((profile) => {
+    const profileUserId = getProfileUserId(profile);
+    return profileUserId ? eligibleUserIds.has(profileUserId) : false;
+  });
+}
+
+function buildCandidateQuery(currentProfile, partnerPreferences) {
+  const conditions = [
+    {
+      user: {
+        $ne: currentProfile.user
+      }
+    }
+  ];
+
+  if (partnerPreferences.gender && partnerPreferences.gender !== "any") {
+    conditions.push({
+      gender: partnerPreferences.gender
+    });
+  }
+
+  if (partnerPreferences.minAge !== undefined || partnerPreferences.maxAge !== undefined) {
+    const ageFilter = {};
+
+    if (partnerPreferences.minAge !== undefined) {
+      ageFilter.$gte = partnerPreferences.minAge;
+    }
+
+    if (partnerPreferences.maxAge !== undefined) {
+      ageFilter.$lte = partnerPreferences.maxAge;
+    }
+
+    conditions.push({
+      age: ageFilter
+    });
+  }
+
+  if (partnerPreferences.minIncome !== undefined) {
+    conditions.push({
+      income: {
+        $gte: partnerPreferences.minIncome
+      }
+    });
+  }
+
+  if (partnerPreferences.religion?.length) {
+    conditions.push({
+      religion: {
+        $in: partnerPreferences.religion
+      }
+    });
+  }
+
+  if (partnerPreferences.caste?.length) {
+    conditions.push({
+      caste: {
+        $in: partnerPreferences.caste
+      }
+    });
+  }
+
+  if (partnerPreferences.education?.length) {
+    conditions.push({
+      education: {
+        $in: partnerPreferences.education
+      }
+    });
+  }
+
+  if (partnerPreferences.profession?.length) {
+    conditions.push({
+      profession: {
+        $in: partnerPreferences.profession
+      }
+    });
+  }
+
+  if (partnerPreferences.location) {
+    conditions.push({
+      location: {
+        $regex: escapeRegex(partnerPreferences.location),
+        $options: "i"
+      }
+    });
+  }
+
+  conditions.push({
+    $or: [
+      { "partnerPreferences.gender": { $exists: false } },
+      { "partnerPreferences.gender": "any" },
+      { "partnerPreferences.gender": currentProfile.gender }
+    ]
+  });
+  conditions.push({
+    $or: [
+      { "partnerPreferences.minAge": { $exists: false } },
+      { "partnerPreferences.minAge": { $lte: currentProfile.age } }
+    ]
+  });
+  conditions.push({
+    $or: [
+      { "partnerPreferences.maxAge": { $exists: false } },
+      { "partnerPreferences.maxAge": { $gte: currentProfile.age } }
+    ]
+  });
+
+  if (conditions.length === 1) {
+    return conditions[0];
+  }
+
+  return {
+    $and: conditions
+  };
+}
+
+export async function findMatchesForUser(userId, options = {}) {
+  const limit = Math.min(Math.max(parseNumber(options.limit, 20), 1), MAX_LIMIT);
+  const minScore = Math.min(Math.max(parseNumber(options.minScore, 0), 0), 100);
+
+  const currentProfile = await Profile.findOne({ user: userId });
+
+  if (!currentProfile) {
+    throw new ApiError(404, "Please create your profile before finding matches");
+  }
+
+  const partnerPreferences = currentProfile.partnerPreferences || {};
+  const candidatePoolLimit = Math.min(Math.max(limit * 12, 120), MAX_CANDIDATE_POOL);
+  const candidateQuery = buildCandidateQuery(currentProfile, partnerPreferences);
+
+  const candidates = await Profile.find(candidateQuery)
+    .sort({ boostExpiresAt: -1, updatedAt: -1 })
+    .limit(candidatePoolLimit);
+  const eligibleCandidates = await filterProfilesByRole(candidates);
+
+  const scoredMatches = eligibleCandidates
+    .filter((candidate) => passesPrimaryPreferenceFilter(candidate, partnerPreferences))
+    .filter((candidate) => passesReciprocalPreferenceFilter(candidate, currentProfile))
+    .map((candidate) => {
+      const scoreData = buildMatchScore(candidate, currentProfile, partnerPreferences);
+
+      return toMatchResult(candidate, scoreData);
+    })
+    .filter((candidate) => candidate.discoveryScore >= minScore)
+    .sort((a, b) => b.discoveryScore - a.discoveryScore || b.matchScore - a.matchScore)
+    .slice(0, limit);
+
+  if (scoredMatches.length > 0) {
+    return {
+      totalMatches: scoredMatches.length,
+      minScore,
+      limit,
+      matches: scoredMatches
+    };
+  }
+
+  // Graceful fallback: show recent profiles when strict preference filters yield no results.
+  const relaxedCandidates = await Profile.find({
+    user: {
+      $ne: currentProfile.user
+    }
+  })
+    .sort({ boostExpiresAt: -1, updatedAt: -1 })
+    .limit(candidatePoolLimit);
+  const eligibleRelaxedCandidates = await filterProfilesByRole(relaxedCandidates);
+
+  const relaxedMatches = eligibleRelaxedCandidates
+    .map((candidate) => {
+      const scoreData = buildMatchScore(candidate, currentProfile, partnerPreferences);
+
+      return toMatchResult(candidate, scoreData);
+    })
+    .filter((candidate) => candidate.discoveryScore >= minScore)
+    .sort((a, b) => b.discoveryScore - a.discoveryScore || b.matchScore - a.matchScore)
+    .slice(0, limit);
+
+  return {
+    totalMatches: relaxedMatches.length,
+    minScore,
+    limit,
+    matches: relaxedMatches
+  };
+}

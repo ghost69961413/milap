@@ -1,0 +1,57 @@
+import { USER_ROLES } from "./roles.js";
+
+export const PERMISSIONS = Object.freeze({
+  ADMIN_PANEL_ACCESS: "admin:panel_access",
+  ADMIN_VIEW_USERS: "admin:view_users",
+  ADMIN_MANAGE_USERS: "admin:manage_users",
+  ADMIN_APPROVE_CONSULTANTS: "admin:approve_consultants",
+  CONSULTANT_VERIFY_USERS: "consultant:verify_users",
+  SERVICE_PROVIDER_RESPOND_REQUESTS: "service_provider:respond_requests",
+  CORE_MATCHMAKING_ACCESS: "core:matchmaking_access",
+  CORE_CHAT_ACCESS: "core:chat_access"
+});
+
+export const ROLE_HIERARCHY = Object.freeze({
+  [USER_ROLES.NORMAL_USER]: 10,
+  [USER_ROLES.LAWYER]: 20,
+  [USER_ROLES.DECORATOR]: 20,
+  [USER_ROLES.CONSULTANT]: 30,
+  [USER_ROLES.ADMIN]: 100
+});
+
+export const ROLE_PERMISSION_MAP = Object.freeze({
+  [USER_ROLES.ADMIN]: Object.freeze([
+    PERMISSIONS.ADMIN_PANEL_ACCESS,
+    PERMISSIONS.ADMIN_VIEW_USERS,
+    PERMISSIONS.ADMIN_MANAGE_USERS,
+    PERMISSIONS.ADMIN_APPROVE_CONSULTANTS
+  ]),
+  [USER_ROLES.CONSULTANT]: Object.freeze([
+    PERMISSIONS.CONSULTANT_VERIFY_USERS,
+    PERMISSIONS.SERVICE_PROVIDER_RESPOND_REQUESTS,
+    PERMISSIONS.CORE_MATCHMAKING_ACCESS,
+    PERMISSIONS.CORE_CHAT_ACCESS
+  ]),
+  [USER_ROLES.LAWYER]: Object.freeze([
+    PERMISSIONS.SERVICE_PROVIDER_RESPOND_REQUESTS,
+    PERMISSIONS.CORE_MATCHMAKING_ACCESS,
+    PERMISSIONS.CORE_CHAT_ACCESS
+  ]),
+  [USER_ROLES.DECORATOR]: Object.freeze([
+    PERMISSIONS.SERVICE_PROVIDER_RESPOND_REQUESTS,
+    PERMISSIONS.CORE_MATCHMAKING_ACCESS,
+    PERMISSIONS.CORE_CHAT_ACCESS
+  ]),
+  [USER_ROLES.NORMAL_USER]: Object.freeze([
+    PERMISSIONS.CORE_MATCHMAKING_ACCESS,
+    PERMISSIONS.CORE_CHAT_ACCESS
+  ])
+});
+
+export function getPermissionsForRole(role) {
+  return ROLE_PERMISSION_MAP[role] || [];
+}
+
+export function hasPermission(role, permission) {
+  return getPermissionsForRole(role).includes(permission);
+}
