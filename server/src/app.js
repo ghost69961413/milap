@@ -13,6 +13,22 @@ import routes from "./routes/index.js";
 const app = express();
 app.set("etag", false);
 
+if (env.nodeEnv === "production") {
+  // Render/Cloudflare sits in front of Express, so trust proxy is required
+  // for correct client IP detection (especially for rate limiting).
+  app.set("trust proxy", 1);
+}
+
+function resolveGlobalRateLimit() {
+  const configuredLimit = Number(process.env.GLOBAL_RATE_LIMIT_MAX);
+
+  if (Number.isFinite(configuredLimit) && configuredLimit > 0) {
+    return configuredLimit;
+  }
+
+  return env.nodeEnv === "production" ? 1500 : 5000;
+}
+
 function buildCorsOriginValidator() {
   if (env.nodeEnv === "production") {
     return env.clientUrl;
@@ -52,9 +68,10 @@ app.use(helmet());
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: env.nodeEnv === "production" ? 200 : 5000,
+    limit: resolveGlobalRateLimit(),
     standardHeaders: "draft-7",
     legacyHeaders: false,
+    skip: (req) => req.method === "OPTIONS" || req.path === "/api/v1/health",
     handler: (_req, res, _next, options) => {
       res.status(options.statusCode).json({
         success: false,
