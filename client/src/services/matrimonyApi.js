@@ -1,8 +1,9 @@
 import { io } from "socket.io-client";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:5001/api/v1";
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://127.0.0.1:5001";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  `${SOCKET_URL.replace(/\/+$/, "")}/api/v1`;
 
 class ApiError extends Error {
   constructor(message, statusCode = 500, details = null) {
