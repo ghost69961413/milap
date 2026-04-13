@@ -169,7 +169,7 @@ function AuthPage() {
             <div className="mt-6 rounded-2xl border border-[#e7d9cb] bg-[#fff7f0] p-4 text-sm text-[#4d576f]">
               <p className="font-semibold text-[#8a2918]">Quick test workflow</p>
               <p className="mt-2">
-                1. Signup/login as user1 and send interest to riya in Discover.
+                1. Signup/login and send interest in Discover, find your partner happy journey.
               </p>
               <p>2. Logout, login as riya and accept in Chat page.</p>
               <p>3. Login back as user1 and chat with riya in real-time.</p>
