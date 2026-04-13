@@ -167,12 +167,12 @@ function AuthPage() {
             </p>
 
             <div className="mt-6 rounded-2xl border border-[#e7d9cb] bg-[#fff7f0] p-4 text-sm text-[#4d576f]">
-              <p className="font-semibold text-[#8a2918]">Quick test workflow</p>
+              <p className="font-semibold text-[#8a2918]">Your Journey Starts Here :</p>
               <p className="mt-2">
-                1. Signup/login and send interest in Discover, find your partner happy journey.
+                1. Sign in and explore profiles in Discover.
               </p>
-              <p>2. Logout, login and accept interest in Chat page.</p>
-              <p>3. afetr acceptiing chat with your partner in real-time.</p>
+              <p>2. Send an interest to someone you like.</p>
+              <p>3. Once accepted, start chatting instantly.</p>
             </div>
           </section>
 
