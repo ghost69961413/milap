@@ -10,9 +10,9 @@ const MATCH_WEIGHTS = {
   interestsMatch: 0.25
 };
 
-const MAX_LIMIT = 500;
+const MAX_LIMIT = 5000;
 const BOOST_DISCOVERY_BONUS = 8;
-const MAX_CANDIDATE_POOL = 500;
+const MAX_CANDIDATE_POOL = 5000;
 
 function normalizeText(value) {
   return (value || "").trim().toLowerCase();

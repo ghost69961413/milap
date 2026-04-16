@@ -27,6 +27,6 @@ function parseOptionalNumber(value) {
 }
 
 export const getMatchesQuerySchema = z.object({
-  limit: z.preprocess(parseOptionalNumber, z.number().int().min(1).max(500)).optional(),
+  limit: z.preprocess(parseOptionalNumber, z.number().int().min(1).max(5000)).optional(),
   minScore: z.preprocess(parseOptionalNumber, z.number().int().min(0).max(100)).optional()
 });
