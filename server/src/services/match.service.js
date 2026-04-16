@@ -10,7 +10,7 @@ const MATCH_WEIGHTS = {
   interestsMatch: 0.25
 };
 
-const MAX_LIMIT = 50;
+const MAX_LIMIT = 500;
 const BOOST_DISCOVERY_BONUS = 8;
 const MAX_CANDIDATE_POOL = 500;
 
@@ -127,77 +127,6 @@ function scoreInterestsMatch(candidateInterests, currentProfile, partnerPreferen
   return Math.round((commonCount / unionCount) * 100);
 }
 
-function passesPrimaryPreferenceFilter(candidate, partnerPreferences) {
-  if (!partnerPreferences) {
-    return true;
-  }
-
-  if (partnerPreferences.gender && partnerPreferences.gender !== "any" && candidate.gender !== partnerPreferences.gender) {
-    return false;
-  }
-
-  if (partnerPreferences.minAge !== undefined && candidate.age < partnerPreferences.minAge) {
-    return false;
-  }
-
-  if (partnerPreferences.maxAge !== undefined && candidate.age > partnerPreferences.maxAge) {
-    return false;
-  }
-
-  if (partnerPreferences.minIncome !== undefined && candidate.income < partnerPreferences.minIncome) {
-    return false;
-  }
-
-  if (partnerPreferences.religion?.length && !hasAnyIntersection([candidate.religion], partnerPreferences.religion)) {
-    return false;
-  }
-
-  if (partnerPreferences.caste?.length && !hasAnyIntersection([candidate.caste], partnerPreferences.caste)) {
-    return false;
-  }
-
-  if (partnerPreferences.education?.length && !hasAnyIntersection([candidate.education], partnerPreferences.education)) {
-    return false;
-  }
-
-  if (partnerPreferences.profession?.length && !hasAnyIntersection([candidate.profession], partnerPreferences.profession)) {
-    return false;
-  }
-
-  if (partnerPreferences.location) {
-    const candidateLocation = normalizeText(candidate.location);
-    const preferredLocation = normalizeText(partnerPreferences.location);
-
-    if (!candidateLocation.includes(preferredLocation)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function passesReciprocalPreferenceFilter(candidate, currentProfile) {
-  const reciprocalPreferences = candidate.partnerPreferences || {};
-
-  if (
-    reciprocalPreferences.gender &&
-    reciprocalPreferences.gender !== "any" &&
-    reciprocalPreferences.gender !== currentProfile.gender
-  ) {
-    return false;
-  }
-
-  if (reciprocalPreferences.minAge !== undefined && currentProfile.age < reciprocalPreferences.minAge) {
-    return false;
-  }
-
-  if (reciprocalPreferences.maxAge !== undefined && currentProfile.age > reciprocalPreferences.maxAge) {
-    return false;
-  }
-
-  return true;
-}
-
 function buildMatchScore(candidate, currentProfile, partnerPreferences) {
   const scoreBreakdown = {
     ageCompatibility: scoreAgeCompatibility(candidate.age, partnerPreferences),
@@ -272,10 +201,6 @@ function parseNumber(value, fallbackValue) {
   return parsedValue;
 }
 
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function getProfileUserId(profile) {
   if (!profile || !profile.user) {
     return null;
@@ -286,6 +211,18 @@ function getProfileUserId(profile) {
   }
 
   return profile.user.toString();
+}
+
+function resolveDiscoverableGenders(currentGender) {
+  if (currentGender === "male") {
+    return ["female"];
+  }
+
+  if (currentGender === "female") {
+    return ["male"];
+  }
+
+  return ["male", "female"];
 }
 
 async function filterProfilesByRole(profiles, role = USER_ROLES.NORMAL_USER) {
@@ -318,7 +255,7 @@ async function filterProfilesByRole(profiles, role = USER_ROLES.NORMAL_USER) {
   });
 }
 
-function buildCandidateQuery(currentProfile, partnerPreferences) {
+function buildCandidateQuery(currentProfile) {
   const conditions = [
     {
       user: {
@@ -327,96 +264,15 @@ function buildCandidateQuery(currentProfile, partnerPreferences) {
     }
   ];
 
-  if (partnerPreferences.gender && partnerPreferences.gender !== "any") {
+  const discoverableGenders = resolveDiscoverableGenders(currentProfile.gender);
+
+  if (discoverableGenders.length) {
     conditions.push({
-      gender: partnerPreferences.gender
-    });
-  }
-
-  if (partnerPreferences.minAge !== undefined || partnerPreferences.maxAge !== undefined) {
-    const ageFilter = {};
-
-    if (partnerPreferences.minAge !== undefined) {
-      ageFilter.$gte = partnerPreferences.minAge;
-    }
-
-    if (partnerPreferences.maxAge !== undefined) {
-      ageFilter.$lte = partnerPreferences.maxAge;
-    }
-
-    conditions.push({
-      age: ageFilter
-    });
-  }
-
-  if (partnerPreferences.minIncome !== undefined) {
-    conditions.push({
-      income: {
-        $gte: partnerPreferences.minIncome
+      gender: {
+        $in: discoverableGenders
       }
     });
   }
-
-  if (partnerPreferences.religion?.length) {
-    conditions.push({
-      religion: {
-        $in: partnerPreferences.religion
-      }
-    });
-  }
-
-  if (partnerPreferences.caste?.length) {
-    conditions.push({
-      caste: {
-        $in: partnerPreferences.caste
-      }
-    });
-  }
-
-  if (partnerPreferences.education?.length) {
-    conditions.push({
-      education: {
-        $in: partnerPreferences.education
-      }
-    });
-  }
-
-  if (partnerPreferences.profession?.length) {
-    conditions.push({
-      profession: {
-        $in: partnerPreferences.profession
-      }
-    });
-  }
-
-  if (partnerPreferences.location) {
-    conditions.push({
-      location: {
-        $regex: escapeRegex(partnerPreferences.location),
-        $options: "i"
-      }
-    });
-  }
-
-  conditions.push({
-    $or: [
-      { "partnerPreferences.gender": { $exists: false } },
-      { "partnerPreferences.gender": "any" },
-      { "partnerPreferences.gender": currentProfile.gender }
-    ]
-  });
-  conditions.push({
-    $or: [
-      { "partnerPreferences.minAge": { $exists: false } },
-      { "partnerPreferences.minAge": { $lte: currentProfile.age } }
-    ]
-  });
-  conditions.push({
-    $or: [
-      { "partnerPreferences.maxAge": { $exists: false } },
-      { "partnerPreferences.maxAge": { $gte: currentProfile.age } }
-    ]
-  });
 
   if (conditions.length === 1) {
     return conditions[0];
@@ -439,7 +295,7 @@ export async function findMatchesForUser(userId, options = {}) {
 
   const partnerPreferences = currentProfile.partnerPreferences || {};
   const candidatePoolLimit = Math.min(Math.max(limit * 12, 120), MAX_CANDIDATE_POOL);
-  const candidateQuery = buildCandidateQuery(currentProfile, partnerPreferences);
+  const candidateQuery = buildCandidateQuery(currentProfile);
 
   const candidates = await Profile.find(candidateQuery)
     .sort({ boostExpiresAt: -1, updatedAt: -1 })
@@ -447,8 +303,6 @@ export async function findMatchesForUser(userId, options = {}) {
   const eligibleCandidates = await filterProfilesByRole(candidates);
 
   const scoredMatches = eligibleCandidates
-    .filter((candidate) => passesPrimaryPreferenceFilter(candidate, partnerPreferences))
-    .filter((candidate) => passesReciprocalPreferenceFilter(candidate, currentProfile))
     .map((candidate) => {
       const scoreData = buildMatchScore(candidate, currentProfile, partnerPreferences);
 
@@ -468,11 +322,7 @@ export async function findMatchesForUser(userId, options = {}) {
   }
 
   // Graceful fallback: show recent profiles when strict preference filters yield no results.
-  const relaxedCandidates = await Profile.find({
-    user: {
-      $ne: currentProfile.user
-    }
-  })
+  const relaxedCandidates = await Profile.find(candidateQuery)
     .sort({ boostExpiresAt: -1, updatedAt: -1 })
     .limit(candidatePoolLimit);
   const eligibleRelaxedCandidates = await filterProfilesByRole(relaxedCandidates);

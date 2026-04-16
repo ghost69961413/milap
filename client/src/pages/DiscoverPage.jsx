@@ -74,7 +74,7 @@ function DiscoverPage() {
     }
 
     try {
-      const data = await getMatches(token, { limit: 25, minScore: 0 });
+      const data = await getMatches(token, { limit: 500, minScore: 0 });
       setProfiles((data.matches || []).map(mapMatchToCard));
       setNeedsProfile(false);
       setError("");
